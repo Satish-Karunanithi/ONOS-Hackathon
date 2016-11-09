@@ -17,9 +17,15 @@ package org.onosproject.pce.pcestore;
 
 import static com.google.common.base.Preconditions.checkNotNull;
 
+import com.google.common.collect.Collections2;
 import com.google.common.collect.ImmutableSet;
 
-import java.util.Map;
+import java.time.DayOfWeek;
+import java.time.LocalDate;
+import java.time.LocalTime;
+import java.util.*;
+import java.util.concurrent.Executors;
+import java.util.concurrent.ScheduledExecutorService;
 import java.util.stream.Collectors;
 
 import org.apache.felix.scr.annotations.Activate;
@@ -69,6 +75,15 @@ public class DistributedPceStore implements PceStore {
     // List of Failed path info
     private DistributedSet<PcePathInfo> failedPathSet;
 
+    //Mapping scheduled path info with path request key
+    private ConsistentMap<PathReqKey, ScheduledPathInfo> scheduledPathMap;
+
+    //Timer from when LSP is scheduled
+    private Map<PathReqKey, ScheduledExecutorService> scheduledLspTimer = new HashMap<>();
+
+    //Timer for deletion of scheduled LSP
+    private Map<PathReqKey, ScheduledExecutorService> scheduledLspDeletionTimer = new HashMap<>();
+
     private static final Serializer SERIALIZER = Serializer
             .using(new KryoNamespace.Builder().register(KryoNamespaces.API)
                     .register(PcePathInfo.class)
@@ -79,6 +94,13 @@ public class DistributedPceStore implements PceStore {
                     .register(CapabilityConstraint.class)
                     .register(CapabilityConstraint.CapabilityType.class)
                     .register(LspType.class)
+                    .register(ScheduledPathInfo.class)
+                    .register(PathReqKey.class)
+                    .register(RepeatPattern.class)
+                    .register(LocalDate.class)
+                    .register(LocalTime.class)
+                    .register(DayOfWeek.class)
+                    .register(LspStatus.class)
                     .build());
 
     @Activate
@@ -98,6 +120,11 @@ public class DistributedPceStore implements PceStore {
                 .withSerializer(SERIALIZER)
                 .build()
                 .asDistributedSet();
+
+        scheduledPathMap = storageService.<PathReqKey, ScheduledPathInfo>consistentMapBuilder()
+                .withName("schedule-path-info")
+                .withSerializer(SERIALIZER)
+                .build();
 
         log.info("Started");
     }
@@ -181,4 +208,73 @@ public class DistributedPceStore implements PceStore {
         }
         return true;
     }
+
+    @Override
+    public void addScheduledPath(PathReqKey pathReqKey, ScheduledPathInfo ScheduledPathInfo) {
+        scheduledPathMap.put(pathReqKey, ScheduledPathInfo);
+    }
+
+   @Override
+    public Map<PathReqKey, ScheduledPathInfo> getScheduledPaths() {
+       return scheduledPathMap.entrySet().stream()
+                 .collect(Collectors.toMap(Map.Entry::getKey, e -> e.getValue().value()));
+    }
+
+
+    @Override
+    public ScheduledPathInfo getScheduledPath(PathReqKey pathReqKey) {
+        return scheduledPathMap.get(pathReqKey) == null ? null : scheduledPathMap.get(pathReqKey).value();
+    }
+
+    @Override
+    public Collection<ScheduledPathInfo> getAllScheduledPath() {
+        return Collections2.transform(scheduledPathMap.values(), v -> v.value());
+    }
+
+    @Override
+    public boolean removeScheduledPath(PathReqKey pathReqKey) {
+
+        if (scheduledPathMap.remove(pathReqKey) == null) {
+            log.error("Tunnel info deletion for tunnel id {} has failed.", pathReqKey.toString());
+            return false;
+        }
+        return true;
+    }
+
+    @Override
+    public void updateScheduledPath(PathReqKey pathReqKey, ScheduledPathInfo scheduledPathInfo) {
+        scheduledPathMap.replace(pathReqKey, scheduledPathInfo);
+    }
+
+    @Override
+    public void addScheduledLspTimer(PathReqKey pathReqKey, ScheduledExecutorService scheduledLspTimerObj) {
+
+        scheduledLspTimer.put(pathReqKey, scheduledLspTimerObj);
+    }
+
+    @Override
+    public void removeScheduledLspTimer(PathReqKey pathReqKey) {
+        scheduledLspTimer.remove(pathReqKey);
+    }
+
+    @Override
+    public void addScheduledLspDeletionTimer(PathReqKey key, ScheduledExecutorService scheduledLspDeletionTimerObj) {
+        scheduledLspDeletionTimer.put(key, scheduledLspDeletionTimerObj);
+    }
+
+    @Override
+    public void removeScheduledLspDeletionTimer(PathReqKey key) {
+        scheduledLspDeletionTimer.remove(key);
+    }
+
+    @Override
+    public ScheduledExecutorService scheduledLspTimerObj(PathReqKey key) {
+        return scheduledLspTimer.get(key);
+    }
+
+    @Override
+    public ScheduledExecutorService scheduledLspDeletionTimerObj(PathReqKey key) {
+        return scheduledLspDeletionTimer.get(key);
+    }
+
 }

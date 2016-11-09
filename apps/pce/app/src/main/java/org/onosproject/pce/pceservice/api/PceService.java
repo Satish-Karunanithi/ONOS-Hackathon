@@ -15,13 +15,22 @@
  */
 package org.onosproject.pce.pceservice.api;
 
-import java.util.List;
-
+import org.onosproject.incubator.net.tunnel.Tunnel;
+import org.onosproject.incubator.net.tunnel.TunnelId;
 import org.onosproject.net.DeviceId;
 import org.onosproject.net.intent.Constraint;
 import org.onosproject.pce.pceservice.LspType;
-import org.onosproject.incubator.net.tunnel.Tunnel;
-import org.onosproject.incubator.net.tunnel.TunnelId;
+import org.onosproject.pce.pcestore.PathReqKey;
+import org.onosproject.pce.pcestore.RepeatPattern;
+import org.onosproject.pce.pcestore.ScheduledPathInfo;
+
+import java.text.ParseException;
+import java.time.DayOfWeek;
+import java.time.LocalDate;
+import java.time.LocalTime;
+import java.util.Collection;
+import java.util.List;
+import java.util.Map;
 
 /**
  * Service to compute path based on constraints, release path,
@@ -72,4 +81,73 @@ public interface PceService {
      * @return tunnel if path exists, otherwise null
      */
     Tunnel queryPath(TunnelId tunnelId);
+
+    /**
+     * Sets up pce path based on calendering for daily/once.
+     *
+     * @param startDate start date of the LSP to be schedule first time
+     * @param repeatPattern scheduling pattern [Daily/Weekly/Monthly/Once]
+     * @param repeatTime time at which the daily/once scheduling should occur
+     * @param duration duration in hours after which the scheduled path should be torn down
+     * @param srcDevice source device
+     * @param dstDevice destination device
+     * @param name name of the tunnel
+     * @param listConstrnt list of constraints to be applied on path
+     * @param lspType type of path to be setup
+     * @throws ParseException while creating tunnel
+     */
+    void schedulePath(LocalDate startDate, RepeatPattern repeatPattern, LocalTime repeatTime,
+                      long duration, DeviceId srcDevice, DeviceId dstDevice, String name, List<Constraint> listConstrnt,
+                      LspType lspType);
+
+    /**
+     * Sets up pce path based on calendering for weekly.
+     *
+     * @param startDate start date of the LSP to be schedule first time
+     * @param repeatPattern scheduling pattern [Daily/Weekly/Monthly/Once]
+     * @param dayOfWeek day of the week on which the weekly scheduling should occur
+     * @param duration duration in hours after which the scheduled path should be torn down
+     * @param srcDevice source device
+     * @param dstDevice destination device
+     * @param name name of the tunnel
+     * @param listConstrnt list of constraints to be applied on path
+     * @param lspType type of path to be setup
+     * @throws ParseException while creating tunnel
+     */
+    void schedulePath(LocalDate startDate, RepeatPattern repeatPattern, DayOfWeek dayOfWeek,
+                      long duration, DeviceId srcDevice, DeviceId dstDevice, String name, List<Constraint> listConstrnt,
+                      LspType lspType);
+
+    /**
+     * Sets up pce path based on calendering for monthly.
+     *
+     * @param startDate start date of the LSP to be schedule first time
+     * @param repeatPattern scheduling pattern [Daily/Weekly/Monthly/Once]
+     * @param dayOfmonth date of the month on which the monthly scheduling should occur
+     * @param duration duration in hours after which the scheduled path should be torn down
+     * @param srcDevice source device
+     * @param dstDevice destination device
+     * @param name name of the tunnel
+     * @param listConstrnt list of constraints to be applied on path
+     * @param lspType type of path to be setup
+     * @throws ParseException while creating tunnel
+     */
+    void schedulePath(LocalDate startDate, RepeatPattern repeatPattern, byte dayOfmonth,
+                      long duration, DeviceId srcDevice, DeviceId dstDevice, String name, List<Constraint> listConstrnt,
+                      LspType lspType);
+
+    /**
+     * Query scheduled path information.
+     *
+     * @param tunnelId tunnel id
+     * @return scheduled path information
+     */
+    ScheduledPathInfo queryScheduledPath(TunnelId tunnelId);
+
+    /**
+     * Query all scheduled path information.
+     *
+     * @return all scheduled path information
+     */
+    Map<PathReqKey, ScheduledPathInfo> getScheduledPaths();
 }

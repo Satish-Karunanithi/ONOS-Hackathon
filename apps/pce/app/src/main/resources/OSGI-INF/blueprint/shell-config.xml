@@ -27,5 +27,11 @@
     <command>
       <action class="org.onosproject.pce.cli.PceDeletePathCommand"/>
     </command>
+    <command>
+      <action class="org.onosproject.pce.cli.PceSetupScheduledPathCommand"/>
+    </command>
+    <command>
+      <action class="org.onosproject.pce.cli.PceQueryScheduledPathCommand"/>
+    </command>
   </command-bundle>
 </blueprint>

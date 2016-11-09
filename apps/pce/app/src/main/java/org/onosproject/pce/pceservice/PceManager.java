@@ -17,13 +17,17 @@ package org.onosproject.pce.pceservice;
 
 import static com.google.common.base.Preconditions.checkNotNull;
 
-import java.util.Collection;
-import java.util.Collections;
-import java.util.Iterator;
-import java.util.LinkedList;
-import java.util.List;
-import java.util.Optional;
-import java.util.Set;
+import java.text.ParseException;
+import java.text.SimpleDateFormat;
+import java.time.DayOfWeek;
+import java.time.LocalDate;
+import java.time.LocalTime;
+import java.util.*;
+import java.util.concurrent.Executors;
+import java.util.concurrent.ScheduledExecutorService;
+import java.util.concurrent.TimeUnit;
+
+import com.esotericsoftware.minlog.Log;
 import org.apache.felix.scr.annotations.Activate;
 import org.apache.felix.scr.annotations.Component;
 import org.apache.felix.scr.annotations.Deactivate;
@@ -74,7 +78,7 @@ import org.onosproject.net.topology.TopologyEvent;
 import org.onosproject.net.topology.TopologyListener;
 import org.onosproject.net.topology.TopologyService;
 import org.onosproject.pce.pceservice.api.PceService;
-import org.onosproject.pce.pcestore.PcePathInfo;
+import org.onosproject.pce.pcestore.*;
 import org.onosproject.pce.pcestore.api.PceStore;
 import org.onosproject.pcep.api.DeviceCapability;
 import org.onosproject.store.serializers.KryoNamespaces;
@@ -121,6 +125,9 @@ public class PceManager implements PceService {
     private static final String LSRID = "lsrId";
     private static final String TRUE = "true";
     private static final String FALSE = "false";
+    public static final int TWENTY_FOUR_HRS_IN_MILLISECS = 86400000;
+    public static final int WEEK_IN_MILLISECS = 86400000 * 7;
+    public static final int AWAIT_TERMINATION = 5;
     public static final int PCEP_PORT = 4189;
 
     private IdGenerator localLspIdIdGen;
@@ -164,9 +171,6 @@ public class PceManager implements PceService {
 
     private final TopologyListener topologyListener = new InternalTopologyListener();
 
-    public static final int INITIAL_DELAY = 30;
-    public static final int PERIODIC_DELAY = 30;
-
     /**
      * Creates new instance of PceManager.
      */
@@ -198,6 +202,245 @@ public class PceManager implements PceService {
         tunnelService.removeListener(listener);
         topologyService.removeListener(topologyListener);
         log.info("Stopped");
+    }
+
+    private void callMontlyTimer(ScheduledExecutorService executorForSchedulingLsp, PathReqKey pathReqKey,
+                         ScheduledPathInfo scheduledPathInfo) {
+
+        executorForSchedulingLsp.schedule(new ScheduleLspTimer(pathReqKey, scheduledPathInfo, executorForSchedulingLsp),
+                nextMonthDate(scheduledPathInfo.repeatDate(), scheduledPathInfo.startDate().getYear()), TimeUnit.MILLISECONDS);
+    }
+
+    private void scheduleTimer(PathReqKey pathReqKey, ScheduledPathInfo scheduledPathInfo) {
+        ScheduledExecutorService executorForSchedulingLsp = Executors.newSingleThreadScheduledExecutor();
+        Date currentDate = new Date();
+
+        if (scheduledPathInfo.repeatPattern().equals(RepeatPattern.DAILY)) {
+            Calendar dailyDate = Calendar.getInstance();
+
+            dailyDate.set(Calendar.DAY_OF_MONTH, scheduledPathInfo.startDate().getDayOfMonth());
+            dailyDate.set(Calendar.MONTH, scheduledPathInfo.startDate().getMonthValue() - 1); //-1 because Jan starts from 0 in calendar
+            dailyDate.set(Calendar.YEAR, scheduledPathInfo.startDate().getYear());
+            dailyDate.set(Calendar.HOUR_OF_DAY, scheduledPathInfo.repeatTime().getHour());
+            dailyDate.set(Calendar.MINUTE, scheduledPathInfo.repeatTime().getMinute());
+            dailyDate.set(Calendar.MILLISECOND, 0);
+
+            long diffInMilliseconds  = dailyDate.getTime().getTime() - currentDate.getTime();
+
+            pceStore.addScheduledLspTimer(pathReqKey, executorForSchedulingLsp);
+
+            executorForSchedulingLsp.scheduleAtFixedRate(new ScheduleLspTimer(pathReqKey, scheduledPathInfo, executorForSchedulingLsp),
+                    diffInMilliseconds,
+                    TWENTY_FOUR_HRS_IN_MILLISECS, TimeUnit.MILLISECONDS);
+
+        } else if (scheduledPathInfo.repeatPattern().equals(RepeatPattern.WEEKLY)) {
+
+            Calendar weeklyDate = Calendar.getInstance();
+            weeklyDate.set(Calendar.DAY_OF_MONTH, scheduledPathInfo.startDate().getDayOfMonth());
+            weeklyDate.set(Calendar.MONTH, scheduledPathInfo.startDate().getMonthValue() - 1); //-1 because Jan starts from 0 in calendar
+            weeklyDate.set(Calendar.YEAR, scheduledPathInfo.startDate().getYear());
+            weeklyDate.set(Calendar.WEEK_OF_MONTH, weeklyDate.get(Calendar.WEEK_OF_MONTH));
+            weeklyDate.set(Calendar.DAY_OF_WEEK, scheduledPathInfo.repeatWeekDay().getValue());
+
+            long diffInMilliseconds  = weeklyDate.getTime().getTime() - currentDate.getTime();
+
+            pceStore.addScheduledLspTimer(pathReqKey, executorForSchedulingLsp);
+
+            executorForSchedulingLsp.scheduleAtFixedRate(new ScheduleLspTimer(pathReqKey, scheduledPathInfo, executorForSchedulingLsp),
+                    diffInMilliseconds, WEEK_IN_MILLISECS, TimeUnit.MILLISECONDS);
+
+        } else if (scheduledPathInfo.repeatPattern().equals(RepeatPattern.MONTHLY)) {
+            //Set the calender to start date specified
+            Calendar monthlyDate = Calendar.getInstance();
+            monthlyDate.set(Calendar.DAY_OF_MONTH, scheduledPathInfo.repeatDate());
+            monthlyDate.set(Calendar.MONTH, scheduledPathInfo.startDate().getMonthValue() - 1);
+            monthlyDate.set(Calendar.YEAR, scheduledPathInfo.startDate().getYear());
+
+            long diffInMilliseconds  = monthlyDate.getTime().getTime() - currentDate.getTime();
+
+            executorForSchedulingLsp.schedule(new ScheduleLspTimer(pathReqKey, scheduledPathInfo, executorForSchedulingLsp),
+                    diffInMilliseconds, TimeUnit.MILLISECONDS);
+
+        } else if (scheduledPathInfo.repeatPattern().equals(RepeatPattern.ONCE)) {
+
+            Calendar once = Calendar.getInstance();
+
+            once.set(Calendar.DAY_OF_MONTH, scheduledPathInfo.startDate().getDayOfMonth());
+            once.set(Calendar.MONTH, scheduledPathInfo.startDate().getMonthValue() - 1); //-1 because Jan starts from 0 in calendar
+            once.set(Calendar.YEAR, scheduledPathInfo.startDate().getYear());
+            once.set(Calendar.HOUR_OF_DAY, scheduledPathInfo.repeatTime().getHour());
+            once.set(Calendar.MINUTE, scheduledPathInfo.repeatTime().getMinute());
+            once.set(Calendar.MILLISECOND, 0);
+
+            long diffInMilliseconds  = once.getTime().getTime() - currentDate.getTime();
+
+            pceStore.addScheduledLspTimer(pathReqKey, executorForSchedulingLsp);
+
+            executorForSchedulingLsp.schedule(new ScheduleLspTimer(pathReqKey, scheduledPathInfo, executorForSchedulingLsp),
+                    diffInMilliseconds, TimeUnit.MILLISECONDS);
+        }
+
+    }
+
+    private long nextMonthDate(short dayOfMonth, int year) {
+        Calendar monthlyDate = Calendar.getInstance();
+        Date currentDate = monthlyDate.getTime();
+
+        monthlyDate.set(Calendar.DAY_OF_MONTH, dayOfMonth);
+        monthlyDate.set(Calendar.YEAR, year);
+
+        monthlyDate.add(Calendar.MONTH, 1);//set to next month
+
+        long diffInMilliseconds  = monthlyDate.getTime().getTime() - currentDate.getTime();
+
+        return diffInMilliseconds;
+    }
+
+
+    private class ScheduleLspTimer extends TimerTask {
+
+        private PathReqKey pathReqKey;
+        private ScheduledPathInfo scheduledPathInfo;
+        private ScheduledExecutorService executorForSchedulingLsp;
+
+        public ScheduleLspTimer(PathReqKey pathReqKey, ScheduledPathInfo scheduledPathInfo,
+                                ScheduledExecutorService executorForSchedulingLsp) {
+            this.pathReqKey = pathReqKey;
+            this.scheduledPathInfo = scheduledPathInfo;
+            this.executorForSchedulingLsp = executorForSchedulingLsp;
+        }
+
+        @Override
+        public void run() {
+
+            if (setupPath(scheduledPathInfo.pcePathInfo().src(), scheduledPathInfo.pcePathInfo().dst(),
+                    scheduledPathInfo.pcePathInfo().name(), scheduledPathInfo.pcePathInfo().constraints(),
+                    scheduledPathInfo.pcePathInfo().lspType())) {
+                scheduledPathInfo.setLspStatus(LspStatus.SCHEDULED);
+                pceStore.updateScheduledPath(pathReqKey, scheduledPathInfo);
+
+                //If tunnel is setup start the timer for a duration mentioned and delete the tunnel
+                ScheduledExecutorService executorForDeleteLspTimer = Executors.newSingleThreadScheduledExecutor();
+
+                pceStore.addScheduledLspDeletionTimer(pathReqKey, executorForDeleteLspTimer);
+
+                executorForDeleteLspTimer.schedule(new DeleteScheduledLsp(executorForDeleteLspTimer, pathReqKey,
+                                scheduledPathInfo), scheduledPathInfo.duration(), TimeUnit.MINUTES);
+
+            }
+
+            //If tunnel setup is successful start timer for next month
+            if (scheduledPathInfo.repeatPattern().equals(RepeatPattern.MONTHLY)) {
+                callMontlyTimer(executorForSchedulingLsp, pathReqKey,
+                        scheduledPathInfo);
+            }
+        }
+    }
+
+    private class DeleteScheduledLsp implements Runnable {
+        ScheduledExecutorService executorForDeleteLspTimer;
+        PathReqKey pathReqKey;
+        ScheduledPathInfo scheduledPathInfo;
+
+        public DeleteScheduledLsp(ScheduledExecutorService executorForDeleteLspTimer, PathReqKey pathReqKey,
+                                  ScheduledPathInfo scheduledPathInfo) {
+
+            this.executorForDeleteLspTimer = executorForDeleteLspTimer;
+            this.pathReqKey = pathReqKey;
+            this.scheduledPathInfo = scheduledPathInfo;
+        }
+
+        @Override
+        public void run() {
+
+            TunnelEndPoint src = IpTunnelEndPoint.ipTunnelPoint(IpAddress.valueOf(deviceService
+                    .getDevice(scheduledPathInfo.pcePathInfo().src()).annotations().value(LSRID)));
+
+            TunnelEndPoint dst = IpTunnelEndPoint.ipTunnelPoint(IpAddress.valueOf(deviceService
+                    .getDevice(scheduledPathInfo.pcePathInfo().dst()).annotations().value(LSRID)));
+            Collection<Tunnel> tunnels = tunnelService.queryTunnel(src, dst);
+            for (Tunnel t : tunnels) {
+                if (t.tunnelName().value().equals(scheduledPathInfo.pcePathInfo().name())) {
+                    releasePath(t.tunnelId());
+
+                    scheduledPathInfo.setLspStatus(LspStatus.NON_SCHEDULED);
+                    pceStore.updateScheduledPath(pathReqKey, scheduledPathInfo);
+                    break;
+                }
+            }
+
+            pceStore.removeScheduledLspDeletionTimer(pathReqKey);
+            executorForDeleteLspTimer.shutdown();
+            try {
+                executorForDeleteLspTimer.awaitTermination(AWAIT_TERMINATION, TimeUnit.SECONDS);
+            } catch (InterruptedException e) {
+                log.error("Removing scheduled lsp failed");
+            }
+        }
+
+    }
+
+    @Override
+    public void schedulePath(LocalDate startDateInLocalDateFmt, RepeatPattern repeatPattern, LocalTime repeatTime,
+                             long duration, DeviceId srcDevice, DeviceId dstDevice, String name, List<Constraint> listConstrnt,
+                             LspType lspType) {
+
+        PcePathInfo pcePathInfo =  new PcePathInfo(srcDevice, dstDevice, name, listConstrnt, lspType);
+        ScheduledPathInfo scheduledPathInfo = new ScheduledPathInfo(startDateInLocalDateFmt, repeatPattern, repeatTime,
+                duration, pcePathInfo);
+        PathReqKey pathReqKey = new PathReqKey(srcDevice, name);
+
+        pceStore.addScheduledPath(pathReqKey, scheduledPathInfo);
+
+        scheduleTimer(pathReqKey, scheduledPathInfo);
+    }
+
+    @Override
+    public void schedulePath(LocalDate startDateInLocalDateFmt, RepeatPattern repeatPattern, DayOfWeek dayOfWeek,
+                             long duration, DeviceId srcDevice, DeviceId dstDevice, String name, List<Constraint> listConstrnt,
+                             LspType lspType) {
+
+        PcePathInfo pcePathInfo =  new PcePathInfo(srcDevice, dstDevice, name, listConstrnt, lspType);
+        ScheduledPathInfo scheduledPathInfo = new ScheduledPathInfo(startDateInLocalDateFmt, repeatPattern, dayOfWeek,
+                duration, pcePathInfo);
+        PathReqKey pathReqKey = new PathReqKey(srcDevice, name);
+
+        pceStore.addScheduledPath(pathReqKey, scheduledPathInfo);
+
+        scheduleTimer(pathReqKey, scheduledPathInfo);
+    }
+
+
+    @Override
+    public void schedulePath(LocalDate startDateInLocalDateFmt, RepeatPattern repeatPattern, byte dayOfmonth,
+                             long duration, DeviceId srcDevice, DeviceId dstDevice, String name, List<Constraint> listConstrnt,
+                             LspType lspType) {
+
+        PcePathInfo pcePathInfo =  new PcePathInfo(srcDevice, dstDevice, name, listConstrnt, lspType);
+        ScheduledPathInfo scheduledPathInfo = new ScheduledPathInfo(startDateInLocalDateFmt, repeatPattern, dayOfmonth,
+                duration, pcePathInfo);
+        PathReqKey pathReqKey = new PathReqKey(srcDevice, name);
+
+        pceStore.addScheduledPath(pathReqKey, scheduledPathInfo);
+
+        scheduleTimer(pathReqKey, scheduledPathInfo);
+    }
+
+    @Override
+    public ScheduledPathInfo queryScheduledPath(TunnelId tunnelId) {
+        Tunnel tunnel = tunnelService.queryTunnel(tunnelId);
+
+        if (tunnel == null) {
+            return null;
+        }
+
+        PathReqKey pathReqKey = new PathReqKey(tunnel.path().src().deviceId(), tunnel.tunnelName().value());
+        return pceStore.getScheduledPath(pathReqKey);
+    }
+
+    @Override
+    public Map<PathReqKey, ScheduledPathInfo> getScheduledPaths() {
+        return pceStore.getScheduledPaths();
     }
 
     /**
@@ -504,7 +747,7 @@ public class PceManager implements PceService {
     }
 
     @Override
-    public boolean releasePath(TunnelId tunnelId) {
+        public boolean releasePath(TunnelId tunnelId) {
         checkNotNull(tunnelId);
         // 1. Query Tunnel from Tunnel manager.
         Tunnel tunnel = tunnelService.queryTunnel(tunnelId);
@@ -512,6 +755,21 @@ public class PceManager implements PceService {
         if (tunnel == null) {
             return false;
         }
+
+        PathReqKey pathReqKey = new PathReqKey(tunnel.path().src().deviceId(), tunnel.tunnelName().value());
+        ScheduledExecutorService scheduledLspDeletionTimerObj = pceStore.scheduledLspDeletionTimerObj(pathReqKey);
+        ScheduledExecutorService scheduledLspTimerObj = pceStore.scheduledLspTimerObj(pathReqKey);
+
+            if (scheduledLspDeletionTimerObj != null) {
+                pceStore.removeScheduledLspDeletionTimer(pathReqKey);
+                scheduledLspDeletionTimerObj.shutdown();
+            }
+
+            if (scheduledLspTimerObj != null) {
+                pceStore.removeScheduledPath(pathReqKey);
+                pceStore.removeScheduledLspTimer(pathReqKey);
+                scheduledLspTimerObj.shutdown();
+            }
 
         // 2. Call tunnel service.
         return tunnelService.downTunnel(appId, tunnel.tunnelId());

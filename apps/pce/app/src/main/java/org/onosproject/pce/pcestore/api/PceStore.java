@@ -17,9 +17,12 @@ package org.onosproject.pce.pcestore.api;
 
 import org.onosproject.incubator.net.tunnel.TunnelId;
 import org.onosproject.net.resource.ResourceConsumer;
-import org.onosproject.pce.pcestore.PcePathInfo;
+import org.onosproject.pce.pcestore.*;
 
+import java.util.Collection;
+import java.util.List;
 import java.util.Map;
+import java.util.concurrent.ScheduledExecutorService;
 
 /**
  * Abstraction of an entity providing pool of available labels to devices, links and tunnels.
@@ -107,4 +110,96 @@ public interface PceStore {
      * @return success or failure
      */
     boolean removeFailedPathInfo(PcePathInfo failedPathInfo);
+
+    /**
+     * Stores scheduled path information into scheduled path info store.
+     *
+     * @param pathReqKey source and tunnel name as a path request key
+     * @param ScheduledPathInfo scheduled path info
+     */
+    void addScheduledPath(PathReqKey pathReqKey, ScheduledPathInfo ScheduledPathInfo);
+
+    /**
+     * Get all scheduled path info.
+     *
+     * @return all scheduled path info
+     */
+    Map<PathReqKey, ScheduledPathInfo> getScheduledPaths();
+
+    /**
+     * Get scheduled path info based on path request key.
+     *
+     * @param pathReqKey source and tunnel name as a path request key
+     * @return scheduled path info
+     */
+    ScheduledPathInfo getScheduledPath(PathReqKey pathReqKey);
+
+    /**
+     * Get all scheduled path info from scheduled path store.
+     *
+     * @return all scheduled path info
+     */
+    Collection<ScheduledPathInfo> getAllScheduledPath();
+
+    /**
+     * Removes path info from scheduled path info store.
+     *
+     * @param pathReqKey source and tunnel name as a path request key
+     * @return whether it has removed from store
+     */
+    boolean removeScheduledPath(PathReqKey pathReqKey);
+
+    /**
+     * Replaces scheduled path info based on path request key.
+     *
+     * @param pathReqKey source and tunnel name as a path request key
+     * @param scheduledPathInfo scheduled path info
+     */
+    void updateScheduledPath(PathReqKey pathReqKey, ScheduledPathInfo scheduledPathInfo);
+
+    /**
+     * Stores scheduled path timer into the store.
+     *
+     * @param pathReqKey source and tunnel name as a path request key
+     * @param scheduledLspTimerObj scheduled path timer object
+     */
+    void addScheduledLspTimer(PathReqKey pathReqKey, ScheduledExecutorService scheduledLspTimerObj);
+
+    /**
+     * Removes scheduled path timer.
+     *
+     * @param pathReqKey source and tunnel name as a path request key
+     */
+    void removeScheduledLspTimer(PathReqKey pathReqKey);
+
+    /**
+     * Stores scheduled path deletion timer into the store.
+     *
+     * @param key source and tunnel name as a path request key
+     * @param scheduledLspDeletionTimerObj scheduled path deletion timer
+     */
+    void addScheduledLspDeletionTimer(PathReqKey key, ScheduledExecutorService scheduledLspDeletionTimerObj);
+
+    /**
+     * Removes scheduled path deletion timer.
+     *
+     * @param key source and tunnel name as a path request key
+     */
+    void removeScheduledLspDeletionTimer(PathReqKey key);
+
+    /**
+     * Gets scheduled path timer for the specified key.
+     *
+     * @param key source and tunnel name as a path request key
+     * @return scheduled path timer
+     */
+    ScheduledExecutorService scheduledLspTimerObj(PathReqKey key);
+
+    /**
+     * Gets scheduled path deletion timer for the specified key.
+     *
+     * @param key source and tunnel name as a path request key
+     * @return scheduled path deletion timer
+     */
+    ScheduledExecutorService scheduledLspDeletionTimerObj(PathReqKey key);
 }
